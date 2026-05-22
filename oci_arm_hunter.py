@@ -11,6 +11,7 @@ from oci.exceptions import ServiceError
 
 
 ARM_SHAPE = "VM.Standard.A1.Flex"
+NETWORK_NAME = "openclaw-a1-net"
 ACTIVE_STATES = {
     "CREATING_IMAGE",
     "MOVING",
@@ -107,20 +108,154 @@ def find_subnet(network_client, compartment_id):
     if subnet_id:
         return subnet_id
 
-    subnets = oci.pagination.list_call_get_all_results(
-        network_client.list_subnets,
-        compartment_id=compartment_id,
-    ).data
-    candidates = [
-        subnet
-        for subnet in subnets
-        if subnet.lifecycle_state == "AVAILABLE"
-        and subnet.prohibit_public_ip_on_vnic is False
+    managed_subnet = find_managed_subnet(network_client, compartment_id)
+    if managed_subnet:
+        return managed_subnet.id
+
+    return create_managed_public_subnet(network_client, compartment_id).id
+
+
+def list_by_display_name(list_fn, compartment_id, display_name):
+    return [
+        item
+        for item in oci.pagination.list_call_get_all_results(
+            list_fn,
+            compartment_id=compartment_id,
+        ).data
+        if item.display_name == display_name and item.lifecycle_state == "AVAILABLE"
     ]
-    if not candidates:
-        raise RuntimeError("No public subnet found. Set OCI_SUBNET_OCID explicitly.")
-    candidates.sort(key=lambda subnet: subnet.time_created or "")
-    return candidates[0].id
+
+
+def find_managed_subnet(network_client, compartment_id):
+    matches = list_by_display_name(
+        network_client.list_subnets,
+        compartment_id,
+        f"{NETWORK_NAME}-subnet",
+    )
+    public_matches = [
+        subnet for subnet in matches if subnet.prohibit_public_ip_on_vnic is False
+    ]
+    if public_matches:
+        print(f"Using managed public subnet: {public_matches[0].id}")
+        return public_matches[0]
+    return None
+
+
+def port_rule(port):
+    return oci.core.models.IngressSecurityRule(
+        protocol="6",
+        source="0.0.0.0/0",
+        tcp_options=oci.core.models.TcpOptions(
+            destination_port_range=oci.core.models.PortRange(max=port, min=port)
+        ),
+    )
+
+
+def create_managed_public_subnet(network_client, compartment_id):
+    print("No public subnet secret found; creating managed public network.")
+    vcn = network_client.create_vcn(
+        oci.core.models.CreateVcnDetails(
+            cidr_block="10.42.0.0/16",
+            compartment_id=compartment_id,
+            display_name=f"{NETWORK_NAME}-vcn",
+            dns_label="openclaw",
+        )
+    ).data
+    vcn = oci.wait_until(
+        network_client,
+        network_client.get_vcn(vcn.id),
+        "lifecycle_state",
+        "AVAILABLE",
+        max_wait_seconds=600,
+    ).data
+
+    internet_gateway = network_client.create_internet_gateway(
+        oci.core.models.CreateInternetGatewayDetails(
+            compartment_id=compartment_id,
+            display_name=f"{NETWORK_NAME}-igw",
+            is_enabled=True,
+            vcn_id=vcn.id,
+        )
+    ).data
+    internet_gateway = oci.wait_until(
+        network_client,
+        network_client.get_internet_gateway(internet_gateway.id),
+        "lifecycle_state",
+        "AVAILABLE",
+        max_wait_seconds=600,
+    ).data
+
+    route_table = network_client.create_route_table(
+        oci.core.models.CreateRouteTableDetails(
+            compartment_id=compartment_id,
+            display_name=f"{NETWORK_NAME}-rt",
+            route_rules=[
+                oci.core.models.RouteRule(
+                    destination="0.0.0.0/0",
+                    destination_type="CIDR_BLOCK",
+                    network_entity_id=internet_gateway.id,
+                )
+            ],
+            vcn_id=vcn.id,
+        )
+    ).data
+    route_table = oci.wait_until(
+        network_client,
+        network_client.get_route_table(route_table.id),
+        "lifecycle_state",
+        "AVAILABLE",
+        max_wait_seconds=600,
+    ).data
+
+    security_list = network_client.create_security_list(
+        oci.core.models.CreateSecurityListDetails(
+            compartment_id=compartment_id,
+            display_name=f"{NETWORK_NAME}-security",
+            egress_security_rules=[
+                oci.core.models.EgressSecurityRule(
+                    destination="0.0.0.0/0",
+                    protocol="all",
+                )
+            ],
+            ingress_security_rules=[
+                port_rule(22),
+                port_rule(80),
+                port_rule(443),
+                port_rule(3000),
+                port_rule(8080),
+            ],
+            vcn_id=vcn.id,
+        )
+    ).data
+    security_list = oci.wait_until(
+        network_client,
+        network_client.get_security_list(security_list.id),
+        "lifecycle_state",
+        "AVAILABLE",
+        max_wait_seconds=600,
+    ).data
+
+    subnet = network_client.create_subnet(
+        oci.core.models.CreateSubnetDetails(
+            cidr_block="10.42.0.0/24",
+            compartment_id=compartment_id,
+            display_name=f"{NETWORK_NAME}-subnet",
+            dns_label="public",
+            prohibit_public_ip_on_vnic=False,
+            route_table_id=route_table.id,
+            security_list_ids=[security_list.id],
+            vcn_id=vcn.id,
+        )
+    ).data
+    subnet = oci.wait_until(
+        network_client,
+        network_client.get_subnet(subnet.id),
+        "lifecycle_state",
+        "AVAILABLE",
+        max_wait_seconds=600,
+    ).data
+    print(f"Created managed public subnet: {subnet.id}")
+    return subnet
 
 
 def find_image(compute_client, compartment_id):
