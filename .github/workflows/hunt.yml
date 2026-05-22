@@ -52,8 +52,9 @@ jobs:
           OCI_IMAGE_OCID: ${{ secrets.OCI_IMAGE_OCID }}
 
       - name: Hunt for capacity
-        run: python oci_arm_hunter.py
+        run: python -u oci_arm_hunter.py
         env:
+          PYTHONUNBUFFERED: "1"
           OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
           OCI_COMPARTMENT_OCID: ${{ secrets.OCI_COMPARTMENT_OCID }}
           OCI_USER_OCID: ${{ secrets.OCI_USER_OCID }}
