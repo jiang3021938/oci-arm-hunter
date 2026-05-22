@@ -29,12 +29,24 @@ jobs:
 
       - name: Mask OCI values
         run: |
-          echo "::add-mask::${{ secrets.OCI_TENANCY_OCID }}"
-          echo "::add-mask::${{ secrets.OCI_COMPARTMENT_OCID }}"
-          echo "::add-mask::${{ secrets.OCI_USER_OCID }}"
-          echo "::add-mask::${{ secrets.OCI_FINGERPRINT }}"
-          echo "::add-mask::${{ secrets.OCI_SUBNET_OCID }}"
-          echo "::add-mask::${{ secrets.OCI_IMAGE_OCID }}"
+          for value in \
+            "$OCI_TENANCY_OCID" \
+            "$OCI_COMPARTMENT_OCID" \
+            "$OCI_USER_OCID" \
+            "$OCI_FINGERPRINT" \
+            "$OCI_SUBNET_OCID" \
+            "$OCI_IMAGE_OCID"; do
+            if [ -n "$value" ]; then
+              echo "::add-mask::$value"
+            fi
+          done
+        env:
+          OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
+          OCI_COMPARTMENT_OCID: ${{ secrets.OCI_COMPARTMENT_OCID }}
+          OCI_USER_OCID: ${{ secrets.OCI_USER_OCID }}
+          OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
+          OCI_SUBNET_OCID: ${{ secrets.OCI_SUBNET_OCID }}
+          OCI_IMAGE_OCID: ${{ secrets.OCI_IMAGE_OCID }}
 
       - name: Hunt for capacity
         run: python oci_arm_hunter.py
