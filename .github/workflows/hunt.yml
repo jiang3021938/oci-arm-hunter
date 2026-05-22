@@ -1,0 +1,57 @@
+name: OCI A1 capacity hunter
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "7 */6 * * *"
+
+concurrency:
+  group: oci-a1-capacity-hunter
+  cancel-in-progress: false
+
+jobs:
+  hunt:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Mask OCI values
+        run: |
+          echo "::add-mask::${{ secrets.OCI_TENANCY_OCID }}"
+          echo "::add-mask::${{ secrets.OCI_COMPARTMENT_OCID }}"
+          echo "::add-mask::${{ secrets.OCI_USER_OCID }}"
+          echo "::add-mask::${{ secrets.OCI_FINGERPRINT }}"
+          echo "::add-mask::${{ secrets.OCI_SUBNET_OCID }}"
+          echo "::add-mask::${{ secrets.OCI_IMAGE_OCID }}"
+
+      - name: Hunt for capacity
+        run: python oci_arm_hunter.py
+        env:
+          OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
+          OCI_COMPARTMENT_OCID: ${{ secrets.OCI_COMPARTMENT_OCID }}
+          OCI_USER_OCID: ${{ secrets.OCI_USER_OCID }}
+          OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
+          OCI_PRIVATE_KEY_B64: ${{ secrets.OCI_PRIVATE_KEY_B64 }}
+          OCI_REGION: ${{ secrets.OCI_REGION }}
+          OCI_SUBNET_OCID: ${{ secrets.OCI_SUBNET_OCID }}
+          OCI_IMAGE_OCID: ${{ secrets.OCI_IMAGE_OCID }}
+          OCI_AVAILABILITY_DOMAINS: ${{ secrets.OCI_AVAILABILITY_DOMAINS }}
+          SSH_PUBLIC_KEY: ${{ secrets.SSH_PUBLIC_KEY }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          OCI_INSTANCE_NAME: openclaw-a1
+          ATTEMPT_INTERVAL_SECONDS: "45"
+          MAX_RUNTIME_SECONDS: "21000"
+          BOOT_VOLUME_SIZE_GB: "200"
+          ASSIGN_PUBLIC_IP: "true"
